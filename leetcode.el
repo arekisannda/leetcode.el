@@ -330,7 +330,13 @@ query globalData {
 
 ;; graphql.el doesn't support `:as' keyword, so let's use the raw graphQL string.
 (defconst leetcode--graphql-problemset-question-list-v2 "
-query problemsetQuestionListV2($filters: QuestionFilterInput, $limit: Int, $searchKeyword: String, $skip: Int, $sortBy: QuestionSortByInput, $categorySlug: String) {
+query problemsetQuestionListV2(
+  $filters: QuestionFilterInput,
+  $limit: Int,
+  $searchKeyword: String,
+  $skip: Int,
+  $sortBy: QuestionSortByInput,
+  $categorySlug: String) {
   problemsetQuestionListV2(
     filters: $filters
     limit: $limit
@@ -594,6 +600,8 @@ of QUERY-NAME."
   (setf (leetcode-user-is-premium leetcode--user) .data.userStatus.isPremium))
 
 (leetcode--define-graphql problemset-question-list-v2 (category-slug skip limit filters search-keyword sort-by)
+  (setf (leetcode-problems-num leetcode--problems) .data.problemsetQuestionListV2.totalLength
+        (leetcode-problems-tag leetcode--problems) "all")
   (let ((problems)
         (page-problems-len (length .data.problemsetQuestionListV2.questions)))
     (leetcode--debug "length: %s, total: %s" page-problems-len .data.problemsetQuestionListV2.totalLength)
@@ -614,12 +622,12 @@ of QUERY-NAME."
                                        .topicTags '()))
               problems)
         (setq leetcode--all-tags (append leetcode--all-tags (leetcode-problem-tags (car problems))))))
-    (setf (leetcode-problems-problems leetcode--problems) (append (leetcode-problems-problems leetcode--problems) (nreverse problems))
-          (leetcode-problems-num leetcode--problems) (+ (leetcode-problems-num leetcode--problems) page-problems-len)
-          (leetcode-problems-tag leetcode--problems) "all"
-          (leetcode-problems-has-more leetcode--problems) .data.problemsetQuestionListV2.hasMore)
+    (setf (leetcode-problems-problems leetcode--problems)
+          (append (if (> skip 0) (leetcode-problems-problems leetcode--problems) nil)
+                  (nreverse problems)))
     ;; problem tags
-    (delete-dups leetcode--all-tags)))
+    (delete-dups leetcode--all-tags)
+    (eq .data.problemsetQuestionListV2.hasMore t)))
 
 (leetcode--define-graphql question-content (title-slug)
   (let ((problem (leetcode--get-problem title-slug)))
@@ -881,27 +889,6 @@ row."
       (lambda (col size) (list col size nil))
       header-names widths))))
 
-(aio-defun leetcode--load-more ()
-  "Load more problems."
-  (aio-await (leetcode--fetch-question-list "all-code-essentials"
-                                            (leetcode-problems-num leetcode--problems)
-                                            100
-                                            '((filterCombineType . "ALL"))
-                                            ""
-                                            '((sortField . "CUSTOM")
-                                              (sortOrder . "ASCENDING"))))
-  (leetcode-refresh))
-
-(defvar leetcode--load-more-button-fn
-  (lambda () (interactive) (aio-wait-for (leetcode--load-more)))
-  "Load more button action.")
-
-(defvar leetcode--load-more-map
-  (let ((map (make-sparse-keymap)))
-    (prog1 map
-      (define-key map (kbd "RET") leetcode--load-more-button-fn)
-      (define-key map [mouse-1] leetcode--load-more-button-fn))))
-
 (defun leetcode-refresh ()
   "Make `tabulated-list-entries'."
   (interactive)
@@ -913,21 +900,10 @@ row."
       (leetcode--problems-mode)
       (setq tabulated-list-format headers)
       (setq tabulated-list-entries
-            (append
-             (cl-mapcar
-              (lambda (i x) (list i x))
-              (number-sequence 0 (1- (length rows)))
-              rows)
-             (if (leetcode-problems-has-more leetcode--problems)
-                 `((:load-more
-                    ["" ""
-                     ,(propertize "[Load More]"
-                                  'face 'button
-                                  'keymap leetcode--load-more-map
-                                  'help-echo "Click to load more"
-                                  'mouse-face 'highlight)
-                     "" "" ""])))))
-
+            (cl-mapcar
+             (lambda (i x) (list i x))
+             (number-sequence 0 (1- (length rows)))
+             rows))
       (tabulated-list-init-header)
       (tabulated-list-print t))))
 
@@ -948,11 +924,11 @@ row."
     (message "LeetCode refreshing question list...")
     (let ((skip 0))
       (while (aio-await (leetcode--fetch-question-list "all-code-essentials"
-                                            0 100
-                                            '((filterCombineType . "ALL"))
-                                            ""
-                                            '((sortField . "CUSTOM")
-                                              (sortOrder . "ASCENDING"))))
+                                                       skip 100
+                                                       '((filterCombineType . "ALL"))
+                                                       ""
+                                                       '((sortField . "CUSTOM")
+                                                         (sortOrder . "ASCENDING")))) ; TODO pagination?
         (setq skip (length (leetcode-problems-problems leetcode--problems)))))
     (message "LeetCode question fetch completed.")
     (setq leetcode--display-tags leetcode-prefer-tag-display)
@@ -1004,7 +980,9 @@ row."
          (problem (leetcode--get-problem title-slug))
          (problem-id (leetcode-problem-id problem))
          (interpret-id (aio-await (leetcode--api-interpret-solution problem))))
-    (aio-await (leetcode--api-check-submission interpret-id problem #'leetcode--show-testcases-result))))
+    (if interpret-id
+        (aio-await (leetcode--api-check-submission interpret-id problem #'leetcode--show-testcases-result)))
+    ))
 
 (aio-defun leetcode-submit ()
   "Asynchronously submit the code and show result."

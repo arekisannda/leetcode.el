@@ -5,7 +5,7 @@
 ;; Author: Wang Kai <kaiwkx@gmail.com>
 ;; Keywords: extensions, tools
 ;; URL: https://github.com/kaiwk/leetcode.el
-;; Package-Requires: ((emacs "28.1") (s "1.13.0") (aio "1.0") (log4e "0.3.3"))
+;; Package-Requires: ((emacs "28.1") (s "1.13.0") (aio "1.0") (log4e "0.3.3") (persist "0.6.1"))
 ;; Version: 0.1.27
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -42,6 +42,7 @@
 (require 'subr-x)
 (require 'mm-url)
 (require 'cl-lib)
+(require 'persist)
 
 (require 's)
 (require 'aio)
@@ -138,6 +139,11 @@ mysql, mssql, oraclesql."
   :group 'leetcode
   :type 'directory)
 
+(defcustom leetcode-cache-max-age-days 7
+  "Maximum age in days for cached data."
+  :group 'leetcode
+  :type 'integer)
+
 (cl-defstruct leetcode-user
   "A LeetCode User.
 The object with following attributes:
@@ -184,17 +190,17 @@ in 'leetcode.el'."
 
 (cl-defstruct leetcode-problems
   "All LeetCode problems, the problems can filtered by tag.
-:num      Number
-:tag      String
-:problems List[leetcode--problems]
-:has-more Boolean"
-  num tag problems has-more)
+:num          Number
+:tag          String
+:problems     List {leetcode--problems}
+:last-updated List {Number}"
+  num tag problems last-updated)
 
-(defvar leetcode--user (make-leetcode-user)
-  "A User object.")
+(with-demoted-errors "Variable `leetcode--user' failed to load persisted data: %S"
+  (persist-defvar leetcode--user (make-leetcode-user) "Leetcode user data."))
 
-(defvar leetcode--problems (make-leetcode-problems)
-  "Problems object with a list of `leetcode-problem'.")
+(with-demoted-errors "Variable `leetcode--user' failed to load persisted data: %S"
+  (persist-defvar leetcode--problems (make-leetcode-problems)  "Problems object with a list of `leetcode-problem'."))
 
 (defvar leetcode--all-tags nil
   "All problems tags.")
@@ -925,21 +931,33 @@ row."
       (tabulated-list-init-header)
       (tabulated-list-print t))))
 
-(aio-defun leetcode-refresh-fetch ()
+(defun leetcode--problems-expired-p ()
+  "Return t if the `last-update` timestamp is greater than `leetcode-cache-max-age-days'."
+  (let* ((ct (current-time))
+         (age-timestamp (time-subtract ct (days-to-time leetcode-cache-max-age-days)))
+         (last-updated (leetcode-problems-last-updated leetcode--problems)))
+    (not (and last-updated (time-less-p age-timestamp last-updated)))))
+
+(aio-defun leetcode-refresh-fetch (&optional force)
   "Refresh problems and update `tabulated-list-entries'."
-  (interactive)
-  (message "LeetCode refreshing question list...")
-  (setf (leetcode-problems-problems leetcode--problems) nil
-        (leetcode-problems-num leetcode--problems) 0
-        (leetcode-problems-has-more leetcode--problems) t)
-  ;; max page limit is 100
-  (aio-await (leetcode--fetch-question-list "all-code-essentials"
+  (interactive "P")
+  (when (or force
+            (eq (length (leetcode-problems-problems leetcode--problems)) 0)
+            (leetcode--problems-expired-p))
+    (persist-reset 'leetcode--problems)
+    (message "LeetCode refreshing question list...")
+    (let ((skip 0))
+      (while (aio-await (leetcode--fetch-question-list "all-code-essentials"
                                             0 100
                                             '((filterCombineType . "ALL"))
                                             ""
                                             '((sortField . "CUSTOM")
-                                              (sortOrder . "ASCENDING")))) ; TODO pagination?
-  (setq leetcode--display-tags leetcode-prefer-tag-display)
+                                              (sortOrder . "ASCENDING"))))
+        (setq skip (length (leetcode-problems-problems leetcode--problems)))))
+    (message "LeetCode question fetch completed.")
+    (setq leetcode--display-tags leetcode-prefer-tag-display)
+    (setq leetcode--display-tags leetcode-prefer-tag-display)
+    (setf (leetcode-problems-last-updated leetcode--problems) (current-time)))
   (leetcode-reset-filter-and-refresh))
 
 (aio-defun leetcode--ensure-login (&optional force)

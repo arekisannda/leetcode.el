@@ -234,7 +234,8 @@ Default is programming language.")
     ("kotlin" . ".kt") ("php" . ".php") ("python" . ".py") ("python3" . ".py")
     ("racket" . ".rkt") ("ruby" . ".rb") ("rust" . ".rs")
     ("scala" . ".scala") ("swift" . ".swift") ("typescript" . ".ts")
-    ("mysql" . ".sql") ("mssql" . ".sql") ("oraclesql" . ".sql"))
+    ("mysql" . ".sql") ("mssql" . ".sql") ("oraclesql" . ".sql")
+    ("pandas" . ".py") ("postgresql" . ".sql"))
   "A map of language slug name to LeetCode programming language suffix.
 c, cpp, csharp, golang, java, javascript, typescript, kotlin, php, python,
 python3, ruby, rust, scala, swift, mysql, mssql, oraclesql.")
@@ -527,7 +528,7 @@ Such as 'Two Sum' will be converted to 'two-sum'. 'Pow(x, n)' will be 'powx-n'"
 (aio-defun leetcode--common-extra-headers ()
   "Common extra headers for `url-request-extra-headers'."
   `(,leetcode--User-Agent ,leetcode--Content-Type
-    ,(cons leetcode--X-CSRFToken (aio-await (leetcode--csrf-token)))))
+                          ,(cons leetcode--X-CSRFToken (aio-await (leetcode--csrf-token)))))
 
 (defun leetcode--buffer-content (buf)
   "Get content without text properties of BUF."
